@@ -1,0 +1,703 @@
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Settings, Calendar, CheckCircle2, Circle, Mic, MicOff, Star, Clock, User, ChevronRight, Plus, Bell } from 'lucide-react';
+
+// ==========================================
+// 音效引擎 (Web Audio API)
+// ==========================================
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+const playTone = (frequency, type = 'sine', duration = 0.1, volume = 0.1) => {
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  const oscillator = audioCtx.createOscillator();
+  const gainNode = audioCtx.createGain();
+  
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+  
+  gainNode.gain.setValueAtTime(volume, audioCtx.currentTime);
+  gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+  
+  oscillator.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+  
+  oscillator.start();
+  oscillator.stop(audioCtx.currentTime + duration);
+};
+
+const playMinorSuccess = () => playTone(880, 'sine', 0.2, 0.1);
+const playMajorSuccess = () => {
+  setTimeout(() => playTone(523.25, 'triangle', 0.3, 0.2), 0);
+  setTimeout(() => playTone(659.25, 'triangle', 0.3, 0.2), 100);
+  setTimeout(() => playTone(783.99, 'triangle', 0.4, 0.2), 200);
+  setTimeout(() => playTone(1046.50, 'sine', 0.6, 0.3), 300);
+};
+
+// ==========================================
+// 核心组件 App
+// ==========================================
+export default function App() {
+  // --- 状态管理 ---
+  const [settings, setSettings] = useState({ birthDate: '1998-01-01', deathAge: 80, showSettings: false });
+  const [tasks, setTasks] = useState([]);
+  const [reflections, setReflections] = useState({});
+  const [notes, setNotes] = useState({});
+  
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [activeTab, setActiveTab] = useState('todo'); 
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [celebration, setCelebration] = useState(false);
+  const [lifeViewMode, setLifeViewMode] = useState('weeks'); // 'weeks' | 'months'
+  const [isDdlModalOpen, setIsDdlModalOpen] = useState(false); // 新增：控制添加 DDL 的弹窗
+  const [ddlReminder, setDdlReminder] = useState('none'); // 新增：控制 DDL 提醒滑动选择
+
+  // --- Gooey Metaball 动画状态机 ---
+  const [modalState, setModalState] = useState('closed'); 
+  const [originRect, setOriginRect] = useState({ x: 0, y: 0, w: 0, h: 0 });
+  const [blobTargetWidth, setBlobTargetWidth] = useState(400);
+
+  // 触发打开动画
+  const openModal = (e, dateStr) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setOriginRect({ 
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+      w: rect.width, 
+      h: rect.height 
+    });
+    setBlobTargetWidth(Math.min(window.innerWidth * 0.95, 420));
+    setSelectedDate(dateStr);
+    setActiveTab('todo');
+    setModalState('entering_start');
+  };
+
+  // 触发关闭动画
+  const closeDayModal = () => {
+    if (modalState !== 'open') return;
+    setModalState('closing_start');
+  };
+
+  // 动画生命周期调度
+  useEffect(() => {
+    let timer1, timer2;
+    if (modalState === 'entering_start') {
+      timer1 = requestAnimationFrame(() => {
+        timer2 = requestAnimationFrame(() => setModalState('entering_active'));
+      });
+    } else if (modalState === 'entering_active') {
+      timer1 = setTimeout(() => setModalState('open'), 600);
+    } else if (modalState === 'closing_start') {
+      timer1 = requestAnimationFrame(() => {
+        timer2 = requestAnimationFrame(() => setModalState('closing_active'));
+      });
+    } else if (modalState === 'closing_active') {
+      timer1 = setTimeout(() => {
+        setModalState('closed');
+        setActiveTab('todo');
+      }, 500);
+    }
+    return () => { cancelAnimationFrame(timer1); cancelAnimationFrame(timer2); clearTimeout(timer1); };
+  }, [modalState]);
+
+  // --- 浏览器通知与 DDL 提醒检测 ---
+  useEffect(() => {
+    // 请求通知权限
+    if ('Notification' in window && Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+      Notification.requestPermission();
+    }
+
+    const getReminderOffset = (type) => {
+      switch(type) {
+        case '0m': return 0;
+        case '5m': return 5 * 60000;
+        case '30m': return 30 * 60000;
+        case '1h': return 60 * 60000;
+        case '12h': return 12 * 60 * 60000;
+        case '1d': return 24 * 60 * 60000;
+        case '2d': return 2 * 24 * 60 * 60000;
+        case '3d': return 3 * 24 * 60 * 60000;
+        case '7d': return 7 * 24 * 60 * 60000;
+        case '14d': return 14 * 24 * 60 * 60000;
+        default: return 0;
+      }
+    };
+
+    // 每 10 秒轮询一次，检查是否有 DDL 需要触发提醒
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setTasks(prev => {
+        let hasUpdate = false;
+        const nextTasks = prev.map(t => {
+          if (t.ddl && t.reminder && t.reminder !== 'none' && !t.notified && !t.completed) {
+            const ddlTime = new Date(t.ddl).getTime();
+            const offset = getReminderOffset(t.reminder);
+            if (now >= ddlTime - offset) {
+              hasUpdate = true;
+              playMinorSuccess(); // 播放提示音
+              if ('Notification' in window && Notification.permission === 'granted') {
+                new Notification('DDL 提醒 ⏰', {
+                  body: `你的任务「${t.text}」即将到期！`,
+                });
+              }
+              return { ...t, notified: true };
+            }
+          }
+          return t;
+        });
+        return hasUpdate ? nextTasks : prev;
+      });
+    }, 10000); 
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // --- 人生进度与当月数据 ---
+  const lifeStats = useMemo(() => {
+    const birth = new Date(settings.birthDate);
+    const now = new Date();
+    const death = new Date(birth.getFullYear() + Number(settings.deathAge), birth.getMonth(), birth.getDate());
+    
+    // 周数计算
+    const totalWeeks = Math.floor((death - birth) / (1000 * 60 * 60 * 24 * 7));
+    const weeksLived = Math.floor((now - birth) / (1000 * 60 * 60 * 24 * 7));
+    const weeksLeft = totalWeeks - weeksLived;
+    
+    // 月数计算
+    const totalMonths = Number(settings.deathAge) * 12;
+    const monthsLived = (now.getFullYear() - birth.getFullYear()) * 12 + now.getMonth() - birth.getMonth();
+    const monthsLeft = totalMonths - monthsLived;
+
+    const progress = Math.min(100, Math.max(0, (weeksLived / totalWeeks) * 100));
+
+    return { totalWeeks, weeksLived, weeksLeft, totalMonths, monthsLived, monthsLeft, progress };
+  }, [settings.birthDate, settings.deathAge]);
+
+  const currentMonthDays = useMemo(() => {
+    const now = new Date();
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    return Array.from({ length: daysInMonth }, (_, i) => new Date(now.getFullYear(), now.getMonth(), i + 1).toISOString().split('T')[0]);
+  }, []);
+
+  // --- 语音与任务交互 ---
+  const recognitionRef = useRef(null);
+  useEffect(() => {
+    if ('webkitSpeechRecognition' in window) {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognitionRef.current = new SpeechRecognition();
+      recognitionRef.current.continuous = false;
+      recognitionRef.current.interimResults = false;
+      recognitionRef.current.lang = 'zh-CN';
+      recognitionRef.current.onresult = (event) => {
+        setReflections(prev => ({ ...prev, [selectedDate]: (prev[selectedDate] || '') + event.results[0][0].transcript }));
+        setIsSpeaking(false);
+      };
+      recognitionRef.current.onerror = () => setIsSpeaking(false);
+      recognitionRef.current.onend = () => setIsSpeaking(false);
+    }
+  }, [selectedDate]);
+
+  const toggleSpeech = () => { isSpeaking ? recognitionRef.current?.stop() : recognitionRef.current?.start(); setIsSpeaking(true); };
+
+  const handleAddTask = (e) => {
+    e.preventDefault();
+    const text = e.target.taskText.value.trim();
+    if (!text) return;
+    setTasks(prev => [...prev, { 
+      id: Date.now().toString(), 
+      date: selectedDate, 
+      text, 
+      isOneThing: e.target.isOneThing.checked, 
+      ddl: e.target.ddl.value, 
+      reminder: 'none', // 默认 P1 添加的任务不带系统提醒
+      notified: false,
+      completed: false 
+    }]);
+    e.target.reset();
+  };
+
+  const handleAddDdlTask = (e) => {
+    e.preventDefault();
+    const text = e.target.ddlText.value.trim();
+    const ddl = e.target.ddlDate.value;
+    const reminder = ddlReminder;
+    if (!text || !ddl) return;
+    
+    setTasks(prev => [...prev, { 
+      id: Date.now().toString(), 
+      date: ddl.split('T')[0], // 自动将任务分配到 DDL 所在的日期
+      text, 
+      isOneThing: e.target.isOneThing.checked, 
+      ddl, 
+      reminder,
+      notified: false,
+      completed: false 
+    }]);
+    setIsDdlModalOpen(false);
+  };
+
+  const toggleTaskStatus = (task) => {
+    const isCompleting = !task.completed;
+    setTasks(prev => prev.map(t => t.id === task.id ? { ...t, completed: isCompleting } : t));
+    if (isCompleting) {
+      task.isOneThing ? (playMajorSuccess(), setCelebration(task.id), setTimeout(() => setCelebration(false), 1500)) : playMinorSuccess();
+    }
+  };
+
+  const currentDayTasks = tasks.filter(t => t.date === selectedDate);
+
+  // --- 滑动与键盘切换逻辑 ---
+  const tabs = ['todo', 'note', 'reflection'];
+  const handleNextTab = () => setActiveTab(prev => tabs[tabs.indexOf(prev) + 1] || prev);
+  const handlePrevTab = () => setActiveTab(prev => tabs[tabs.indexOf(prev) - 1] || prev);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (modalState !== 'open' || ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+      if (e.key === 'ArrowUp') { e.preventDefault(); handlePrevTab(); }
+      if (e.key === 'ArrowDown') { e.preventDefault(); handleNextTab(); }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [modalState]);
+
+  const [touchStart, setTouchStart] = useState(null);
+  const onTouchStart = (e) => setTouchStart(e.targetTouches[0].clientY);
+  const onTouchEnd = (e) => {
+    if (!touchStart) return;
+    const distance = touchStart - e.changedTouches[0].clientY;
+    if (distance > 50) handleNextTab();
+    if (distance < -50) handlePrevTab();
+  };
+
+  const wheelTimeout = useRef(null);
+  const handleWheel = (e) => {
+    if (wheelTimeout.current) return;
+    if (e.deltaY > 30) { handleNextTab(); wheelTimeout.current = setTimeout(() => wheelTimeout.current = null, 400); }
+    if (e.deltaY < -30) { handlePrevTab(); wheelTimeout.current = setTimeout(() => wheelTimeout.current = null, 400); }
+  };
+
+  // --- 动态卡片样式 ---
+  const getCardStyle = (tabName) => {
+    const diff = tabs.indexOf(tabName) - tabs.indexOf(activeTab);
+    let base = "absolute w-full max-w-[420px] left-0 right-0 mx-auto h-[500px] shadow-[0_8px_32px_rgba(44,48,46,0.08)] transition-all duration-500 ease-out overflow-hidden rounded-3xl ";
+    
+    if (modalState !== 'open') return base + `scale-[0.8] opacity-0 translate-y-0 pointer-events-none z-10`;
+
+    if (diff === 0) return base + "z-30 translate-y-0 scale-100 opacity-100 ";
+    if (diff === 1) return base + "z-20 translate-y-[85px] scale-[0.96] opacity-90 hover:opacity-100 cursor-pointer";
+    if (diff === 2) return base + "z-10 translate-y-[170px] scale-[0.92] opacity-70 hover:opacity-90 cursor-pointer";
+    if (diff === -1) return base + "z-20 -translate-y-[85px] scale-[0.96] opacity-90 hover:opacity-100 cursor-pointer";
+    if (diff === -2) return base + "z-10 -translate-y-[170px] scale-[0.92] opacity-70 hover:opacity-90 cursor-pointer";
+  };
+
+  // --- 注入自定义动画 CSS ---
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.innerHTML = `
+      @keyframes shake { 0%, 30%, 60%, 90% { transform: translate(1px, 1px) rotate(0deg); } 10%, 50%, 100% { transform: translate(-1px, -2px) rotate(-1deg); } 20%, 80% { transform: translate(-3px, 0px) rotate(1deg); } 40%, 70% { transform: translate(3px, 1px) rotate(-1deg); } }
+      .animate-shake { animation: shake 0.5s; animation-iteration-count: 2; }
+      @keyframes flashBackground { 0% { background-color: rgba(217, 119, 87, 0.2); } 100% { background-color: transparent; } }
+      .animate-flash { animation: flashBackground 1s ease-out; }
+      
+      /* 优雅的自定义滚动条，适配侘寂风 */
+      .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+      .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+      .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #E6E4E0; border-radius: 4px; }
+      .custom-scrollbar:hover::-webkit-scrollbar-thumb { background-color: #B5B3AE; }
+
+      /* 大理石/圆石质感引擎 */
+      .marble-stone {
+        position: relative;
+        overflow: hidden;
+        box-shadow: 
+          inset -2px -3px 5px rgba(0,0,0,0.15), 
+          inset 2px 3px 5px rgba(255,255,255,0.9),
+          2px 3px 5px rgba(44,48,46,0.15);
+      }
+      .marble-stone::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background-image: 
+          radial-gradient(circle at 30% 30%, rgba(255,255,255,0.6) 0%, transparent 50%),
+          url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.02' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.3'/%3E%3C/svg%3E");
+        mix-blend-mode: overlay;
+        pointer-events: none;
+        border-radius: inherit;
+      }
+      .marble-stone:hover {
+        box-shadow: 
+          inset -2px -3px 4px rgba(0,0,0,0.1), 
+          inset 2px 3px 4px rgba(255,255,255,0.9),
+          3px 5px 8px rgba(44,48,46,0.2);
+      }
+    `;
+    document.head.appendChild(style);
+    return () => document.head.removeChild(style);
+  }, []);
+
+  const isGooeyActive = ['entering_start', 'entering_active', 'closing_start', 'closing_active'].includes(modalState);
+  const isBlobExpanded = ['entering_active', 'closing_start'].includes(modalState);
+
+  return (
+    <div className="min-h-screen bg-[#F9F8F6] text-[#2C302E] font-sans selection:bg-[#7A9180] selection:text-white">
+      
+      <svg style={{ position: 'absolute', width: 0, height: 0 }}>
+        <filter id="gooey">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="15" result="blur" />
+          <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 25 -10" result="goo" />
+          <feComposite in="SourceGraphic" in2="goo" operator="atop"/>
+        </filter>
+      </svg>
+
+      <header className="flex justify-between items-center p-6 max-w-4xl mx-auto">
+        <button onClick={() => setSettings(s => ({...s, showSettings: true}))} className="flex items-center gap-2 hover:bg-[#E6E4E0] p-2 rounded-full transition-colors">
+          <div className="w-10 h-10 bg-[#2C302E] text-[#F9F8F6] rounded-full flex items-center justify-center shadow-md"><User size={20} /></div>
+        </button>
+        <h1 className="text-xl font-bold tracking-widest uppercase opacity-80 text-[#2C302E]">Focus & Memento Mori</h1>
+        <div className="w-10"></div>
+      </header>
+
+      <main className="max-w-4xl mx-auto px-6 pb-20 space-y-16">
+        
+        {/* 本月轨迹 */}
+        <section>
+          <h2 className="text-sm font-semibold text-[#8C8A86] mb-4 uppercase tracking-wider">本月轨迹</h2>
+          <div className="grid grid-cols-7 sm:grid-cols-10 gap-3">
+            {currentMonthDays.map((dateStr) => {
+              const dayTasks = tasks.filter(t => t.date === dateStr);
+              const allDone = dayTasks.length > 0 && dayTasks.every(t => t.completed);
+              const hasOneThingDone = dayTasks.some(t => t.isOneThing && t.completed);
+              
+              return (
+                <button
+                  key={dateStr}
+                  onClick={(e) => openModal(e, dateStr)}
+                  className={`
+                    w-10 h-10 sm:w-11 sm:h-11 mx-auto marble-stone rounded-full flex items-center justify-center text-xs transition-all duration-300
+                    ${dateStr === new Date().toISOString().split('T')[0] ? 'ring-2 ring-[#2C302E] ring-offset-2 ring-offset-[#F9F8F6]' : ''}
+                    ${hasOneThingDone ? 'bg-[#D97757] text-white transform hover:scale-110' : 
+                      allDone ? 'bg-[#7A9180] text-white' : dayTasks.length > 0 ? 'bg-[#B5B3AE]' : 'bg-[#E6E4E0] hover:bg-[#DEDAD1]'}
+                  `}
+                  title={dateStr}
+                />
+              );
+            })}
+          </div>
+        </section>
+
+        {/* DDL 倒计时区 */}
+        <section>
+          <h2 className="text-sm font-semibold text-[#8C8A86] mb-4 uppercase tracking-wider">即将到来的 DDL</h2>
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#E6E4E0] flex flex-col gap-3 max-h-80 overflow-y-auto custom-scrollbar">
+             {tasks.filter(t => t.ddl && !t.completed).sort((a,b) => new Date(a.ddl) - new Date(b.ddl)).map(task => (
+                <div key={task.id} className="flex justify-between items-center bg-[#F9F8F6] p-3 rounded-lg border border-[#E6E4E0]">
+                  <div className="flex items-center gap-3">
+                    <Clock size={16} className="text-[#D97757]" />
+                    <span className="font-medium text-[#2C302E]">{task.text}</span>
+                    {task.reminder && task.reminder !== 'none' && !task.notified && <Bell size={12} className="text-[#7A9180]" title="已开启提醒" />}
+                  </div>
+                  <span className="text-sm text-[#D97757] font-mono">{new Date(task.ddl).toLocaleString()}</span>
+                </div>
+             ))}
+
+             <button
+               onClick={() => { setIsDdlModalOpen(true); setDdlReminder('none'); }}
+               className="flex items-center justify-center gap-2 p-3 mt-1 rounded-xl border-2 border-dashed border-[#E6E4E0] text-[#8C8A86] hover:bg-[#F9F8F6] hover:text-[#D97757] hover:border-[#D97757] transition-all active:scale-[0.98]"
+             >
+               <Plus size={18} /> <span className="font-medium">添加新 DDL</span>
+             </button>
+          </div>
+        </section>
+
+        {/* 人生倒计时图 */}
+        <section className="bg-white p-8 rounded-3xl shadow-sm border border-[#E6E4E0]">
+          <div className="flex justify-between items-start mb-8">
+            <div className="flex items-center gap-6">
+               <div className="relative w-20 h-20">
+                  <svg className="w-full h-full transform -rotate-90">
+                    <circle cx="40" cy="40" r="36" stroke="currentColor" strokeWidth="8" fill="transparent" className="text-[#E6E4E0]" />
+                    <circle cx="40" cy="40" r="36" stroke="currentColor" strokeWidth="8" fill="transparent" strokeDasharray={226.2} strokeDashoffset={226.2 - (226.2 * lifeStats.progress) / 100} className="text-[#7A9180] transition-all duration-1000 ease-out" />
+                  </svg>
+                  <div className="absolute inset-0 flex items-center justify-center flex-col"><span className="text-xs font-bold text-[#2C302E]">{Math.round(lifeStats.progress)}%</span></div>
+               </div>
+               <div>
+                 <h3 className="text-xl font-bold text-[#2C302E]">人生电量</h3>
+               </div>
+            </div>
+            
+            {/* 动态随 ViewMode 改变的数据区 */}
+            <div className="text-right">
+               <div className="text-2xl font-mono font-bold text-[#2C302E]">
+                 {lifeViewMode === 'weeks' ? lifeStats.weeksLived : lifeStats.monthsLived} 
+                 <span className="text-[#B5B3AE] text-lg"> / {lifeViewMode === 'weeks' ? lifeStats.totalWeeks : lifeStats.totalMonths} {lifeViewMode === 'weeks' ? '周' : '月'}</span>
+               </div>
+               <div className="text-sm text-[#8C8A86] mt-1">剩余 {lifeViewMode === 'weeks' ? lifeStats.weeksLeft : lifeStats.monthsLeft} {lifeViewMode === 'weeks' ? '周' : '月'}</div>
+            </div>
+          </div>
+
+          {/* 叠加层点阵图区域：点击整块区域切换前后卡片 */}
+          <div className="grid mt-8 cursor-pointer relative" onClick={() => setLifeViewMode(v => v === 'weeks' ? 'months' : 'weeks')}>
+             
+             {/* 周点阵卡片 (Weeks) */}
+             <div 
+               className={`col-start-1 row-start-1 self-start w-full h-[380px] flex flex-col bg-[#F9F8F6] rounded-2xl p-6 border transition-all duration-500 ease-out origin-top 
+                 ${lifeViewMode === 'weeks' ? 'border-[#E6E4E0] z-20 scale-100 opacity-100 shadow-sm' : 'border-[#DEDAD1] z-10 scale-[0.97] translate-y-3 opacity-60 hover:opacity-80'}`}
+             >
+               <h4 className="text-xs font-bold text-[#8C8A86] mb-4 uppercase tracking-widest flex items-center gap-2 flex-shrink-0">
+                 <Calendar size={14}/> Weeks / 周
+               </h4>
+               <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 flex flex-wrap content-start gap-1">
+                 {Array.from({ length: lifeStats.totalWeeks }).map((_, i) => (
+                   <div key={`w-${i}`} className={`w-1.5 h-1.5 rounded-full ${i < lifeStats.weeksLived ? 'bg-[#2C302E]' : 'bg-[#E6E4E0]'}`} />
+                 ))}
+               </div>
+             </div>
+
+             {/* 月点阵卡片 (Months) */}
+             <div 
+               className={`col-start-1 row-start-1 self-start w-full h-[380px] flex flex-col bg-[#F2EDE4] rounded-2xl p-6 border transition-all duration-500 ease-out origin-top 
+                 ${lifeViewMode === 'months' ? 'border-[#DEDAD1] z-20 scale-100 opacity-100 shadow-sm' : 'border-[#E6E4E0] z-10 scale-[0.97] translate-y-3 opacity-60 hover:opacity-80'}`}
+             >
+               <h4 className="text-xs font-bold text-[#8C8A86] mb-4 uppercase tracking-widest flex items-center gap-2 flex-shrink-0">
+                 <Calendar size={14}/> Months / 月
+               </h4>
+               <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 flex flex-wrap content-start gap-1">
+                 {Array.from({ length: lifeStats.totalMonths }).map((_, i) => (
+                   <div key={`m-${i}`} className={`w-2 h-2 rounded-full ${i < lifeStats.monthsLived ? 'bg-[#7A9180]' : 'bg-[#DEDAD1]'}`} />
+                 ))}
+               </div>
+             </div>
+          </div>
+
+        </section>
+      </main>
+
+      {/* 动态弹窗区域 */}
+      {modalState !== 'closed' && (
+        <>
+          <div 
+            className={`fixed inset-0 z-30 transition-opacity duration-500 ease-out 
+              ${['entering_active', 'open', 'closing_start'].includes(modalState) ? 'opacity-100' : 'opacity-0'} 
+              ${celebration ? 'bg-[#2C302E]/80 animate-flash' : 'bg-[#2C302E]/60 backdrop-blur-sm'}`}
+            onClick={closeDayModal}
+          />
+
+          {isGooeyActive && (
+            <div className="fixed inset-0 z-40 pointer-events-none" style={{ filter: 'url(#gooey)', transform: 'translateZ(0)' }}>
+              <div 
+                className="absolute bg-white transition-opacity duration-500"
+                style={{
+                  left: originRect.x, top: originRect.y, 
+                  width: originRect.w, height: originRect.h, 
+                  transform: 'translate(-50%, -50%)', borderRadius: '50%',
+                  opacity: isBlobExpanded ? 0.3 : 1
+                }} 
+              />
+              <div 
+                className={`absolute bg-white transition-all duration-[600ms] ease-[cubic-bezier(0.34,1.56,0.64,1)]`}
+                style={{
+                  left: isBlobExpanded ? '50%' : originRect.x,
+                  top: isBlobExpanded ? '50%' : originRect.y,
+                  width: isBlobExpanded ? blobTargetWidth : originRect.w,
+                  height: isBlobExpanded ? 500 : originRect.h,
+                  borderRadius: isBlobExpanded ? '32px' : '50%',
+                  transform: 'translate(-50%, -50%)'
+                }}
+              />
+            </div>
+          )}
+
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
+            onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} onWheel={handleWheel}
+          >
+            <div className="relative w-full h-[500px] pointer-events-none px-4 flex justify-center">
+              
+              {/* P3: Reflection 复盘卡片 */}
+              <div className={`${getCardStyle('reflection')} bg-white/80 backdrop-blur-2xl pointer-events-auto border border-white/70`}>
+                {activeTab !== 'reflection' && <div className="absolute inset-0 z-50" onClick={() => setActiveTab('reflection')}></div>}
+                <div className="p-6 h-full flex flex-col">
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-xl font-bold text-[#2C302E] flex items-center gap-2">复盘 <span className="text-[#8C8A86] text-sm font-normal">P3</span></h3>
+                    {activeTab === 'reflection' && <button onClick={closeDayModal} className="text-[#8C8A86] hover:text-[#D97757] transition-colors">关闭</button>}
+                  </div>
+                  <div className="flex-1 flex flex-col">
+                    <div className="min-h-[80px] flex items-center justify-center mb-6">
+                      <p className={`text-lg font-serif font-semibold text-center text-[#2C302E] transition-all duration-1000 ${activeTab === 'reflection' ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
+                        “我能做的那一件关键事是什么？<br/><span className="text-[#8C8A86] text-sm mt-2 block">做了哪件事，会让其他所有事变得更简单？</span>”
+                      </p>
+                    </div>
+                    <div className="flex-1 relative">
+                      <textarea className="w-full h-full bg-white/50 backdrop-blur-md border border-[#E6E4E0]/80 rounded-xl p-4 resize-none focus:outline-none focus:ring-2 focus:ring-[#7A9180] shadow-inner text-[#2C302E]" placeholder="写下你的思考..." value={reflections[selectedDate] || ''} onChange={(e) => setReflections(prev => ({...prev, [selectedDate]: e.target.value}))} />
+                      <button onClick={toggleSpeech} className={`absolute bottom-4 right-4 p-3 rounded-full transition-all shadow-sm ${isSpeaking ? 'bg-[#D97757] text-white animate-pulse' : 'bg-[#2C302E] text-[#F9F8F6]'}`}>
+                        {isSpeaking ? <MicOff size={20} /> : <Mic size={20} />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* P2: Note 笔记卡片 */}
+              <div className={`${getCardStyle('note')} bg-[#F2EDE4]/85 backdrop-blur-2xl pointer-events-auto border border-white/60`}>
+                {activeTab !== 'note' && <div className="absolute inset-0 z-50" onClick={() => setActiveTab('note')}></div>}
+                <div className="p-6 h-full flex flex-col">
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-xl font-bold text-[#5C574F] flex items-center gap-2">Note <span className="text-[#9E9A94] text-sm font-normal">P2</span></h3>
+                    {activeTab === 'note' && <button onClick={closeDayModal} className="text-[#9E9A94] hover:text-[#D97757] transition-colors">关闭</button>}
+                  </div>
+                  <textarea className="flex-1 w-full bg-white/40 backdrop-blur-md border border-[#DEDAD1]/60 rounded-xl p-4 resize-none focus:outline-none focus:ring-2 focus:ring-[#D97757] shadow-inner text-[#2C302E]" placeholder="记录生活..." value={notes[selectedDate] || ''} onChange={(e) => setNotes(prev => ({...prev, [selectedDate]: e.target.value}))} />
+                </div>
+              </div>
+
+              {/* P1: To Do 任务卡片 */}
+              <div className={`${getCardStyle('todo')} bg-white/80 backdrop-blur-2xl pointer-events-auto border border-white/70`}>
+                {activeTab !== 'todo' && <div className="absolute inset-0 z-50" onClick={() => setActiveTab('todo')}></div>}
+                <div className="p-6 h-full flex flex-col">
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-2xl font-bold text-[#2C302E] flex items-center gap-2">{selectedDate} To Do <span className="text-[#8C8A86] text-sm font-normal">P1</span></h3>
+                    {activeTab === 'todo' && <button onClick={closeDayModal} className="text-[#8C8A86] hover:text-[#D97757] transition-colors">关闭</button>}
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto space-y-3 mb-6 pr-2">
+                    {currentDayTasks.map(task => (
+                      <div key={task.id} onClick={() => activeTab === 'todo' && toggleTaskStatus(task)} className={`group flex items-center gap-3 p-4 rounded-2xl border cursor-pointer transition-all ${task.completed ? (task.isOneThing ? 'bg-[#D97757]/90 text-white border-[#D97757]' : 'bg-[#F9F8F6]/80 text-[#8C8A86] border-[#E6E4E0]/60') : (task.isOneThing ? 'bg-[#F2EDE4]/80 border-[#D97757]/40 hover:bg-[#F2EDE4]' : 'bg-white/60 border-[#E6E4E0]/80 hover:bg-white/90')} ${celebration === task.id ? 'animate-shake z-50 relative' : ''}`}>
+                        <button className={`flex-shrink-0 ${task.completed ? (task.isOneThing ? 'text-white' : 'text-[#7A9180]') : 'text-[#B5B3AE]'}`}>{task.completed ? <CheckCircle2 size={24} /> : <Circle size={24} />}</button>
+                        <div className="flex-1 flex flex-col"><span className={`font-medium text-lg ${task.completed ? 'line-through opacity-70' : ''}`}>{task.text}</span></div>
+                        {task.isOneThing && <Star size={20} className={task.completed ? 'text-white fill-current' : 'text-[#D97757] fill-current'} />}
+                      </div>
+                    ))}
+                  </div>
+
+                  <form onSubmit={handleAddTask} className="mt-auto bg-white/50 backdrop-blur-md p-4 rounded-2xl border border-[#E6E4E0]/60 shadow-inner">
+                    <input type="text" name="taskText" placeholder="添加新任务..." className="w-full bg-transparent text-lg border-none focus:outline-none mb-3 text-[#2C302E] placeholder-[#8C8A86]" autoComplete="off" disabled={activeTab !== 'todo'} />
+                    <div className="flex items-center justify-between border-t border-[#E6E4E0]/60 pt-3">
+                      <div className="flex items-center gap-4">
+                        <label className="flex items-center gap-2 text-sm text-[#8C8A86] cursor-pointer hover:text-[#2C302E] transition-colors"><input type="checkbox" name="isOneThing" disabled={activeTab !== 'todo'} className="w-4 h-4 rounded border-[#B5B3AE] text-[#D97757] focus:ring-[#D97757] accent-[#D97757]" /><Star size={16} className="text-[#D97757]" /> 设为 The ONE</label>
+                        <input type="datetime-local" name="ddl" disabled={activeTab !== 'todo'} className="text-xs bg-white/60 border border-[#E6E4E0] rounded-md p-1 px-2 text-[#8C8A86] focus:outline-none focus:border-[#7A9180] backdrop-blur-sm" />
+                      </div>
+                      <button type="submit" disabled={activeTab !== 'todo'} className="bg-[#2C302E] text-[#F9F8F6] w-8 h-8 rounded-full flex items-center justify-center shadow-sm hover:scale-105 active:scale-95 transition-transform"><ChevronRight size={20} /></button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* 设置面板 */}
+      {settings.showSettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#2C302E]/60 backdrop-blur-sm p-4" onClick={() => setSettings(s => ({...s, showSettings: false}))}>
+          <div className="bg-[#F9F8F6] rounded-3xl p-8 w-full max-w-sm shadow-2xl border border-[#E6E4E0]" onClick={e => e.stopPropagation()}>
+            <h2 className="text-2xl font-bold mb-6 text-[#2C302E]">设置你的人生参数</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-[#8C8A86] mb-1">出生日期</label>
+                <input 
+                  type="date" 
+                  value={settings.birthDate}
+                  onChange={e => setSettings(s => ({...s, birthDate: e.target.value}))}
+                  className="w-full bg-white border border-[#E6E4E0] rounded-xl p-3 focus:ring-2 focus:ring-[#7A9180] focus:outline-none text-[#2C302E]"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[#8C8A86] mb-1">预期寿命 (岁)</label>
+                <input 
+                  type="number" 
+                  value={settings.deathAge}
+                  onChange={e => setSettings(s => ({...s, deathAge: parseInt(e.target.value) || 80}))}
+                  className="w-full bg-white border border-[#E6E4E0] rounded-xl p-3 focus:ring-2 focus:ring-[#7A9180] focus:outline-none text-[#2C302E]"
+                />
+              </div>
+              <p className="text-xs text-[#8C8A86] mt-4 leading-relaxed">
+                这些数据用于生成首页的“人生电量图”。直面时间的流逝，能帮助我们把时间留给真正想做、重要的事情。
+              </p>
+              <button 
+                onClick={() => setSettings(s => ({...s, showSettings: false}))}
+                className="w-full bg-[#2C302E] text-[#F9F8F6] font-bold rounded-xl p-4 mt-6 hover:bg-[#1A1C1B] active:scale-[0.98] transition-all shadow-md"
+              >
+                保存并开始专注
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 添加 DDL 专属面板 */}
+      {isDdlModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#2C302E]/60 backdrop-blur-sm p-4" onClick={() => setIsDdlModalOpen(false)}>
+          <div className="bg-white/80 backdrop-blur-2xl rounded-3xl p-8 w-full max-w-sm shadow-[0_8px_32px_rgba(44,48,46,0.15)] border border-white/70 animate-modal-enter" onClick={e => e.stopPropagation()}>
+            <h2 className="text-2xl font-bold mb-6 text-[#2C302E] flex items-center gap-2">
+              <Clock className="text-[#D97757]" /> 设定 DDL
+            </h2>
+            <form onSubmit={handleAddDdlTask} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-[#8C8A86] mb-1">任务目标</label>
+                <input 
+                  type="text" 
+                  name="ddlText"
+                  required
+                  placeholder="要完成什么..."
+                  className="w-full bg-white/50 backdrop-blur-md border border-[#E6E4E0]/80 rounded-xl p-3 focus:ring-2 focus:ring-[#D97757] focus:outline-none text-[#2C302E] shadow-inner placeholder-[#B5B3AE]"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[#8C8A86] mb-1">截止时间</label>
+                <input 
+                  type="datetime-local" 
+                  name="ddlDate"
+                  required
+                  className="w-full bg-white/50 backdrop-blur-md border border-[#E6E4E0]/80 rounded-xl p-3 focus:ring-2 focus:ring-[#D97757] focus:outline-none text-[#2C302E] shadow-inner"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[#8C8A86] mb-1">系统提醒 (上下滑动选择)</label>
+                <div className="h-32 overflow-y-auto custom-scrollbar bg-white/50 backdrop-blur-md border border-[#E6E4E0]/80 rounded-xl shadow-inner p-1 snap-y">
+                  {[
+                    { value: 'none', label: '无提醒' },
+                    { value: '0m', label: '正点提醒' },
+                    { value: '5m', label: '提前 5 分钟' },
+                    { value: '30m', label: '提前 30 分钟' },
+                    { value: '1h', label: '提前 1 小时' },
+                    { value: '12h', label: '提前 12 小时' },
+                    { value: '1d', label: '提前 1 天' },
+                    { value: '2d', label: '提前 2 天' },
+                    { value: '3d', label: '提前 3 天' },
+                    { value: '7d', label: '提前 7 天' },
+                    { value: '14d', label: '提前 14 天' }
+                  ].map(opt => (
+                    <div
+                      key={opt.value}
+                      onClick={() => setDdlReminder(opt.value)}
+                      className={`snap-center px-4 py-2.5 my-1 text-center rounded-lg cursor-pointer transition-all text-sm ${
+                        ddlReminder === opt.value
+                          ? 'bg-[#D97757] text-white font-bold shadow-md scale-100'
+                          : 'text-[#8C8A86] hover:bg-white/80 hover:text-[#2C302E] scale-95'
+                      }`}
+                    >
+                      {opt.label}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="pt-2">
+                <label className="flex items-center gap-2 text-sm text-[#2C302E] cursor-pointer hover:text-[#D97757] transition-colors">
+                  <input type="checkbox" name="isOneThing" className="w-4 h-4 rounded border-[#B5B3AE] text-[#D97757] focus:ring-[#D97757] accent-[#D97757]" />
+                  <Star size={16} className="text-[#D97757]" /> 同时设为 The ONE Thing
+                </label>
+              </div>
+              <button 
+                type="submit"
+                className="w-full bg-[#D97757] text-[#F9F8F6] font-bold rounded-xl p-4 mt-6 hover:bg-[#C26547] active:scale-[0.98] transition-all shadow-md"
+              >
+                确认设定
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+}
