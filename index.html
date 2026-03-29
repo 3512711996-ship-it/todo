@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Focus & Memento Mori | Marble Edition</title>
+  
+  <!-- 引入 Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 引入 Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    /* ==========================================
+       高级设计系统与动画库
+       ========================================== */
+    @keyframes shake { 
+      0%, 30%, 60%, 90% { transform: translate(1px, 1px) rotate(0deg); } 
+      10%, 50%, 100% { transform: translate(-1px, -2px) rotate(-1deg); } 
+      20%, 80% { transform: translate(-3px, 0px) rotate(1deg); } 
+      40%, 70% { transform: translate(3px, 1px) rotate(-1deg); } 
+    }
+    .animate-shake { animation: shake 0.5s; animation-iteration-count: 2; }
+    
+    @keyframes flashBackground { 
+      0% { background-color: rgba(217, 119, 87, 0.3); } 
+      100% { background-color: transparent; } 
+    }
+    .animate-flash { animation: flashBackground 1s ease-out; }
+    
+    @keyframes modalEnter { 
+      from { opacity: 0; transform: scale(0.95) translateY(10px); } 
+      to { opacity: 1; transform: scale(1) translateY(0); } 
+    }
+    .animate-modal-enter { animation: modalEnter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+    
+    /* 优雅的细滚动条 */
+    .custom-scrollbar::-webkit-scrollbar { width: 5px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background-color: rgba(0,0,0,0.15); border-radius: 10px; }
+    .custom-scrollbar:hover::-webkit-scrollbar-thumb { background-color: rgba(0,0,0,0.3); }
+
+    /* --- 核心：大理石光影引擎 (Marble Sculpted Physics) --- */
+    .marble-stone {
+      position: relative;
+      overflow: hidden;
+      background-color: rgba(255, 255, 255, 0.7);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      box-shadow: 
+        inset -3px -4px 8px rgba(0, 0, 0, 0.08), 
+        inset 3px 4px 8px rgba(255, 255, 255, 0.9),
+        3px 4px 10px rgba(0, 0, 0, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.5);
+      transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .marble-stone::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image: 
+        radial-gradient(circle at 20% 20%, rgba(255,255,255,0.8) 0%, transparent 60%),
+        url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.04' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.15'/%3E%3C/svg%3E");
+      mix-blend-mode: overlay;
+      pointer-events: none;
+      border-radius: inherit;
+    }
+    .marble-stone:hover {
+      box-shadow: 
+        inset -2px -3px 5px rgba(0, 0, 0, 0.05), 
+        inset 2px 3px 5px rgba(255, 255, 255, 0.95),
+        5px 8px 15px rgba(0, 0, 0, 0.08);
+      transform: translateY(-1px);
+    }
+
+    /* 雕刻字体质感 */
+    .text-engraved {
+      color: rgba(45, 55, 72, 0.5);
+      text-shadow: 1px 1px 0px rgba(255, 255, 255, 0.9), -1px -1px 0px rgba(0, 0, 0, 0.05);
+    }
+    .text-embossed {
+      color: rgba(255, 255, 255, 0.95);
+      text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2);
+    }
+
+    /* 雕塑式面板 (Glassmorphism + Neumorphism) */
+    .sculpted-panel {
+      background: rgba(255, 255, 255, 0.65);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.8);
+      box-shadow: 
+        0 8px 32px rgba(0, 0, 0, 0.04),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+    }
+
+    /* 全局背景图层 */
+    #global-bg-layer {
+      position: fixed;
+      inset: 0;
+      z-index: -10;
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+      transition: all 0.8s ease;
+    }
+    /* 全局大理石纹理覆膜 */
+    #global-texture-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: -9;
+      pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.015' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.12'/%3E%3C/svg%3E");
+      mix-blend-mode: multiply;
+      transition: opacity 0.5s;
+    }
+
+    .hidden-safe { display: none !important; }
+  </style>
+</head>
+<body class="min-h-screen text-[#2D3748] font-sans selection:bg-[#7A9180] selection:text-white pb-20 overflow-x-hidden">
+
+  <!-- 自定义背景系统 -->
+  <div id="global-bg-layer" style="background-color: #F4F2EE;"></div>
+  <div id="global-texture-overlay"></div>
+
+  <!-- 隐藏的 SVG Filter (用于 Metaball) -->
+  <svg style="position: absolute; width: 0; height: 0;">
+    <filter id="gooey">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="15" result="blur" />
+      <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 25 -10" result="goo" />
+      <feComposite in="SourceGraphic" in2="goo" operator="atop"/>
+    </filter>
+  </svg>
+
+  <!-- 顶部导航 -->
+  <header class="flex justify-between items-center p-6 max-w-4xl mx-auto">
+    <button onclick="openSettings()" class="flex items-center gap-2 hover:bg-white/50 p-2 rounded-full transition-all marble-stone">
+      <div class="w-10 h-10 bg-[#2D3748] text-[#F9F8F6] rounded-full flex items-center justify-center shadow-md">
+        <i data-lucide="settings-2" class="w-5 h-5"></i>
+      </div>
+    </button>
+    <h1 class="text-xl font-bold tracking-widest uppercase text-[#2D3748] drop-shadow-sm mix-blend-color-burn">Memento Mori</h1>
+    <div class="w-10"></div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-6 space-y-16 relative z-10">
+    
+    <!-- 动态月份轨迹 -->
+    <section>
+      <div class="flex items-center justify-between mb-5">
+        <h2 class="text-sm font-bold text-[#718096] uppercase tracking-widest drop-shadow-sm" id="month-title">轨迹 / Track</h2>
+        <div class="flex gap-2">
+          <button onclick="changeMonth(-1)" class="w-8 h-8 rounded-full marble-stone flex items-center justify-center text-[#718096] hover:text-[#2D3748]">
+            <i data-lucide="chevron-left" class="w-4 h-4"></i>
+          </button>
+          <button onclick="changeMonth(1)" class="w-8 h-8 rounded-full marble-stone flex items-center justify-center text-[#718096] hover:text-[#2D3748]">
+            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+      <div id="monthly-track" class="grid grid-cols-7 sm:grid-cols-10 gap-4">
+        <!-- JS 动态生成 -->
+      </div>
+    </section>
+
+    <!-- DDL 倒计时区 -->
+    <section>
+      <h2 class="text-sm font-bold text-[#718096] mb-5 uppercase tracking-widest drop-shadow-sm">即将到来 / Deadlines</h2>
+      <div class="sculpted-panel p-6 rounded-3xl flex flex-col gap-3 max-h-80 overflow-y-auto custom-scrollbar">
+         
+         <div id="ddl-list" class="flex flex-col gap-3">
+            <!-- JS 动态生成 -->
+         </div>
+
+         <button onclick="openDdlModal()" class="flex items-center justify-center gap-2 p-3 mt-2 rounded-2xl border-2 border-dashed border-[#CBD5E0] text-[#718096] bg-white/30 hover:bg-white/70 hover:text-[#C05621] hover:border-[#C05621] transition-all active:scale-[0.98]">
+           <i data-lucide="plus" class="w-4 h-4"></i> <span class="font-medium tracking-wide">添加新 DDL</span>
+         </button>
+      </div>
+    </section>
+
+    <!-- 人生倒计时图 -->
+    <section class="sculpted-panel p-8 rounded-[2rem]">
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-6">
+        <div class="flex items-center gap-6">
+           <div class="relative w-24 h-24">
+              <svg class="w-full h-full transform -rotate-90 drop-shadow-md">
+                <circle cx="48" cy="48" r="42" stroke="currentColor" stroke-width="8" fill="transparent" class="text-white/60" />
+                <circle id="life-progress-circle" cx="48" cy="48" r="42" stroke="currentColor" stroke-width="8" fill="transparent" stroke-dasharray="263.9" stroke-dashoffset="263.9" stroke-linecap="round" class="text-[#688371] transition-all duration-1000 ease-out" />
+              </svg>
+              <div class="absolute inset-0 flex items-center justify-center flex-col">
+                <span id="life-progress-text" class="text-sm font-black text-[#2D3748]">0%</span>
+              </div>
+           </div>
+           <div>
+             <h3 class="text-2xl font-black text-[#2D3748] tracking-wide drop-shadow-sm">人生电量</h3>
+             <p class="text-[#718096] text-sm mt-1">Memento Mori</p>
+           </div>
+        </div>
+        
+        <div class="text-left sm:text-right">
+           <div class="text-3xl font-mono font-black text-[#2D3748] drop-shadow-sm">
+             <span id="life-lived">0</span> 
+             <span class="text-[#A0AEC0] text-xl font-medium"> / <span id="life-total">0</span> <span id="life-unit-1">周</span></span>
+           </div>
+           <div class="text-sm font-bold text-[#718096] mt-1 bg-white/40 inline-block px-3 py-1 rounded-full border border-white/60">
+             剩余 <span id="life-left" class="text-[#C05621]">0</span> <span id="life-unit-2">周</span>
+           </div>
+        </div>
+      </div>
+
+      <!-- 动态点阵图区域 -->
+      <div class="grid mt-8 cursor-pointer relative" onclick="toggleLifeViewMode()">
+         <!-- Weeks -->
+         <div id="card-weeks" class="col-start-1 row-start-1 self-start w-full h-[380px] flex flex-col bg-white/50 backdrop-blur-md rounded-3xl p-6 border transition-all duration-500 ease-out origin-top z-20 scale-100 opacity-100 shadow-sm border-white/80">
+           <h4 class="text-xs font-bold text-[#718096] mb-4 uppercase tracking-widest flex items-center gap-2 flex-shrink-0 drop-shadow-sm">
+             <i data-lucide="calendar" class="w-3.5 h-3.5"></i> Weeks / 周
+           </h4>
+           <div id="grid-weeks" class="flex-1 overflow-y-auto custom-scrollbar pr-2 flex flex-wrap content-start gap-[3px]"></div>
+         </div>
+
+         <!-- Months -->
+         <div id="card-months" class="col-start-1 row-start-1 self-start w-full h-[380px] flex flex-col bg-[#F2EDE4]/70 backdrop-blur-md rounded-3xl p-6 border transition-all duration-500 ease-out origin-top z-10 scale-[0.97] translate-y-3 opacity-60 hover:opacity-80 border-white/50">
+           <h4 class="text-xs font-bold text-[#718096] mb-4 uppercase tracking-widest flex items-center gap-2 flex-shrink-0 drop-shadow-sm">
+             <i data-lucide="calendar" class="w-3.5 h-3.5"></i> Months / 月
+           </h4>
+           <div id="grid-months" class="flex-1 overflow-y-auto custom-scrollbar pr-2 flex flex-wrap content-start gap-[5px]"></div>
+         </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ================= 弹窗系统 ================= -->
+
+  <!-- 每日详情弹窗遮罩 -->
+  <div id="day-modal-backdrop" class="fixed inset-0 z-30 transition-opacity duration-500 ease-out opacity-0 pointer-events-none bg-[#1A202C]/60 backdrop-blur-sm" onclick="closeDayModal()"></div>
+
+  <!-- Gooey 动画层 -->
+  <div id="gooey-container" class="fixed inset-0 z-40 pointer-events-none hidden-safe" style="filter: url(#gooey); transform: translateZ(0)">
+    <div id="blob-origin" class="absolute bg-white/95 transition-opacity duration-500"></div>
+    <div id="blob-expanded" class="absolute bg-white/95 transition-all duration-[600ms] ease-[cubic-bezier(0.34,1.56,0.64,1)]"></div>
+  </div>
+
+  <!-- 每日详情卡片组 -->
+  <div id="day-modal-container" class="fixed inset-0 z-50 flex items-center justify-center pointer-events-none hidden-safe">
+    <div class="relative w-full h-[560px] pointer-events-none px-4 flex justify-center perspective-[1000px]">
+      
+      <!-- P3 Reflection -->
+      <div id="tab-reflection" class="">
+        <div class="absolute inset-0 z-50 cursor-pointer" onclick="setActiveTab('reflection')" id="overlay-reflection"></div>
+        <div class="p-8 h-full flex flex-col">
+          <div class="flex justify-between items-center mb-6 border-b border-white/40 pb-4">
+            <h3 class="text-xl font-black text-[#2D3748] flex items-center gap-2 tracking-wide">复盘 <span class="text-[#A0AEC0] text-sm font-bold bg-white/50 px-2 py-0.5 rounded">P3</span></h3>
+            <button onclick="closeDayModal()" class="text-[#A0AEC0] hover:text-[#C05621] transition-colors btn-close bg-white/50 p-2 rounded-full"><i data-lucide="x" class="w-4 h-4"></i></button>
+          </div>
+          <div class="flex-1 flex flex-col">
+            <div class="min-h-[80px] flex items-center justify-center mb-6">
+              <p class="text-lg font-serif font-semibold text-center text-[#2D3748] transition-all duration-1000 opacity-0 translate-y-4 drop-shadow-sm" id="reflection-quote">
+                “我能做的那一件关键事是什么？<br/><span class="text-[#718096] text-sm mt-2 block font-sans">做了哪件事，会让其他所有事变得更简单？</span>”
+              </p>
+            </div>
+            <div class="flex-1 relative">
+              <textarea id="reflection-input" oninput="saveText('reflection', this.value)" class="w-full h-full bg-white/50 backdrop-blur-md border border-white/80 rounded-2xl p-5 resize-none focus:outline-none focus:ring-2 focus:ring-[#688371] shadow-inner text-[#2D3748] disabled:opacity-50 transition-all custom-scrollbar leading-relaxed" placeholder="静下心来，写下你的思考..."></textarea>
+              <button id="btn-mic" onclick="toggleSpeech()" class="absolute bottom-4 right-4 p-3 rounded-full transition-all shadow-[0_4px_10px_rgba(0,0,0,0.1)] bg-[#2D3748] text-[#F9F8F6] hover:scale-105 active:scale-95">
+                <i data-lucide="mic" class="w-5 h-5"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- P2 Note -->
+      <div id="tab-note" class="">
+        <div class="absolute inset-0 z-50 cursor-pointer" onclick="setActiveTab('note')" id="overlay-note"></div>
+        <div class="p-8 h-full flex flex-col">
+          <div class="flex justify-between items-center mb-6 border-b border-black/5 pb-4">
+            <h3 class="text-xl font-black text-[#4A5568] flex items-center gap-2 tracking-wide">Note <span class="text-[#A0AEC0] text-sm font-bold bg-white/50 px-2 py-0.5 rounded">P2</span></h3>
+            <button onclick="closeDayModal()" class="text-[#A0AEC0] hover:text-[#C05621] transition-colors btn-close bg-white/50 p-2 rounded-full"><i data-lucide="x" class="w-4 h-4"></i></button>
+          </div>
+          <textarea id="note-input" oninput="saveText('note', this.value)" class="flex-1 w-full bg-white/40 backdrop-blur-md border border-white/70 rounded-2xl p-5 resize-none focus:outline-none focus:ring-2 focus:ring-[#D69E2E] shadow-inner text-[#2D3748] disabled:opacity-50 transition-all custom-scrollbar leading-relaxed" placeholder="记录今天闪现的灵感..."></textarea>
+        </div>
+      </div>
+
+      <!-- P1 To Do -->
+      <div id="tab-todo" class="">
+        <div class="absolute inset-0 z-50 cursor-pointer" onclick="setActiveTab('todo')" id="overlay-todo"></div>
+        <div class="p-8 h-full flex flex-col">
+          <div class="flex justify-between items-center mb-6 border-b border-white/40 pb-4">
+            <h3 class="text-2xl font-black text-[#2D3748] flex items-center gap-2 tracking-wide"><span id="modal-date-title"></span> <span class="text-[#718096] text-lg font-bold">To Do</span> <span class="text-[#A0AEC0] text-sm font-bold bg-white/50 px-2 py-0.5 rounded ml-1">P1</span></h3>
+            <button onclick="closeDayModal()" class="text-[#A0AEC0] hover:text-[#C05621] transition-colors btn-close bg-white/50 p-2 rounded-full"><i data-lucide="x" class="w-4 h-4"></i></button>
+          </div>
+
+          <div id="day-task-list" class="flex-1 overflow-y-auto space-y-3 mb-6 pr-2 custom-scrollbar">
+            <!-- JS 动态生成 -->
+          </div>
+
+          <form id="add-task-form" onsubmit="handleAddTask(event)" class="mt-auto bg-white/50 backdrop-blur-md p-5 rounded-2xl border border-white/90 shadow-inner">
+            <input type="text" id="task-text-input" placeholder="添加新任务..." class="w-full bg-transparent text-lg font-medium border-none focus:outline-none mb-4 text-[#2D3748] placeholder-[#A0AEC0]" autocomplete="off">
+            <div class="flex items-center justify-between border-t border-black/5 pt-3">
+              <div class="flex items-center gap-4">
+                <label class="flex items-center gap-1.5 text-sm font-bold text-[#718096] cursor-pointer hover:text-[#C05621] transition-colors">
+                  <input type="checkbox" id="task-onething-input" class="w-4 h-4 rounded border-[#CBD5E0] text-[#C05621] focus:ring-[#C05621] accent-[#C05621]">
+                  <i data-lucide="star" class="w-4 h-4 text-[#C05621]"></i> The ONE
+                </label>
+                <input type="datetime-local" id="task-ddl-input" class="text-xs font-mono font-medium bg-white/70 border border-white/90 rounded-lg p-1.5 px-2 text-[#718096] focus:outline-none focus:ring-2 focus:ring-[#688371] backdrop-blur-sm shadow-sm">
+              </div>
+              <button type="submit" id="btn-submit-task" class="bg-[#2D3748] text-white w-9 h-9 rounded-full flex items-center justify-center shadow-[0_4px_10px_rgba(0,0,0,0.1)] hover:scale-105 active:scale-95 transition-transform disabled:opacity-50">
+                <i data-lucide="chevron-right" class="w-5 h-5"></i>
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 设置面板 (包含背景与参数) -->
+  <div id="settings-modal" class="fixed inset-0 z-[60] flex items-center justify-center bg-[#1A202C]/60 backdrop-blur-md p-4 hidden-safe animate-modal-enter" onclick="closeSettings()">
+    <div class="sculpted-panel rounded-[2rem] p-8 w-full max-w-md shadow-2xl border border-white/80 max-h-[90vh] overflow-y-auto custom-scrollbar" onclick="event.stopPropagation()">
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-2xl font-black text-[#2D3748] drop-shadow-sm">系统设置</h2>
+        <button onclick="closeSettings()" class="text-[#A0AEC0] hover:text-[#C05621] transition-colors"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+
+      <div class="space-y-6">
+        <div class="bg-white/40 p-5 rounded-2xl border border-white/60 shadow-inner">
+          <h3 class="text-sm font-black text-[#718096] mb-4 uppercase tracking-wider flex items-center gap-2"><i data-lucide="clock" class="w-4 h-4"></i> 倒数参数</h3>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-xs font-bold text-[#A0AEC0] mb-1">出生日期</label>
+              <input type="date" id="set-birth" class="w-full bg-white/70 border border-white/80 rounded-xl p-3 focus:ring-2 focus:ring-[#688371] focus:outline-none text-[#2D3748] font-mono shadow-sm">
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-[#A0AEC0] mb-1">预期寿命 (岁)</label>
+              <input type="number" id="set-death" class="w-full bg-white/70 border border-white/80 rounded-xl p-3 focus:ring-2 focus:ring-[#688371] focus:outline-none text-[#2D3748] font-mono shadow-sm">
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-white/40 p-5 rounded-2xl border border-white/60 shadow-inner">
+          <h3 class="text-sm font-black text-[#718096] mb-4 uppercase tracking-wider flex items-center gap-2"><i data-lucide="palette" class="w-4 h-4"></i> 美学系统设置</h3>
+          <div class="flex flex-col gap-4">
+            <label class="flex items-center gap-3 p-3 rounded-xl border border-white/60 bg-white/50 cursor-pointer hover:bg-white/80 transition-colors">
+              <input type="radio" name="bgMode" value="default" onchange="changeBgMode('default')" class="w-4 h-4 text-[#688371] focus:ring-[#688371]"> 
+              <span class="text-sm font-bold text-[#2D3748]">古典大理石 (Classic Marble)</span>
+            </label>
+            <label class="flex items-center gap-3 p-3 rounded-xl border border-white/60 bg-white/50 cursor-pointer hover:bg-white/80 transition-colors">
+              <input type="radio" name="bgMode" value="color" onchange="changeBgMode('color')" class="w-4 h-4 text-[#688371] focus:ring-[#688371]"> 
+              <span class="text-sm font-bold text-[#2D3748] flex-1">纯色美学 (Solid Color)</span>
+              <input type="color" id="bg-color-picker" class="w-8 h-8 rounded border-none cursor-pointer bg-transparent" onchange="updateBgColor(this.value)">
+            </label>
+            <label class="flex items-center gap-3 p-3 rounded-xl border border-white/60 bg-white/50 cursor-pointer hover:bg-white/80 transition-colors">
+              <input type="radio" name="bgMode" value="image" onchange="changeBgMode('image')" class="w-4 h-4 text-[#688371] focus:ring-[#688371]"> 
+              <span class="text-sm font-bold text-[#2D3748]">自定义壁纸 (Custom Image)</span>
+            </label>
+            <div id="custom-image-upload-area" class="hidden pl-2">
+              <input type="file" id="bg-image-input" accept="image/*" class="text-xs text-[#718096] file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-[#E2E8F0] file:text-[#2D3748] hover:file:bg-[#CBD5E0] cursor-pointer" onchange="handleImageUpload(event)">
+              <img id="bg-image-preview" class="mt-3 w-full h-32 object-cover rounded-xl border-2 border-white shadow-md hidden">
+            </div>
+            <label class="flex items-center gap-2 mt-2 text-xs font-bold text-[#718096] cursor-pointer pl-1">
+              <input type="checkbox" id="toggle-texture-overlay" onchange="toggleTextureOverlay()" class="rounded border-[#CBD5E0] text-[#688371] focus:ring-[#688371]">
+              保留大理石光影覆膜 (推荐开启)
+            </label>
+          </div>
+        </div>
+
+        <button onclick="saveSettings()" class="w-full bg-[#2D3748] text-white font-black rounded-xl p-4 mt-2 hover:bg-[#1A202C] active:scale-[0.98] transition-all shadow-[0_4px_15px_rgba(0,0,0,0.15)] tracking-widest">
+          保存美学设置
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 添加 DDL 专属面板 -->
+  <div id="ddl-modal" class="fixed inset-0 z-[60] flex items-center justify-center bg-[#1A202C]/60 backdrop-blur-md p-4 hidden-safe animate-modal-enter" onclick="closeDdlModal()">
+    <div class="sculpted-panel rounded-[2rem] p-8 w-full max-w-sm shadow-2xl border border-white/80" onclick="event.stopPropagation()">
+      <h2 class="text-2xl font-black mb-6 text-[#2D3748] flex items-center gap-2 drop-shadow-sm">
+        <i data-lucide="clock" class="w-6 h-6 text-[#C05621]"></i> 设定 DDL
+      </h2>
+      <form onsubmit="handleAddDdlTask(event)" class="space-y-5">
+        <div>
+          <label class="block text-xs font-bold text-[#A0AEC0] mb-1 uppercase tracking-wide">任务目标</label>
+          <input type="text" id="ddl-text" required placeholder="要完成什么..." class="w-full bg-white/60 backdrop-blur-md border border-white/80 rounded-xl p-3 focus:ring-2 focus:ring-[#C05621] focus:outline-none text-[#2D3748] shadow-inner font-medium placeholder-[#CBD5E0]">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-[#A0AEC0] mb-1 uppercase tracking-wide">截止时间</label>
+          <input type="datetime-local" id="ddl-date" required class="w-full bg-white/60 backdrop-blur-md border border-white/80 rounded-xl p-3 focus:ring-2 focus:ring-[#C05621] focus:outline-none text-[#2D3748] shadow-inner font-mono">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-[#A0AEC0] mb-1 uppercase tracking-wide">系统提醒 (上下滑动选择)</label>
+          <div id="reminder-options" class="h-32 overflow-y-auto custom-scrollbar bg-white/40 backdrop-blur-md border border-white/80 rounded-xl shadow-inner p-2 snap-y">
+            <!-- JS 动态生成 -->
+          </div>
+        </div>
+        <div class="pt-2">
+          <label class="flex items-center gap-2 text-sm font-bold text-[#2D3748] cursor-pointer hover:text-[#C05621] transition-colors">
+            <input type="checkbox" id="ddl-onething" class="w-4 h-4 rounded border-[#CBD5E0] text-[#C05621] focus:ring-[#C05621] accent-[#C05621]">
+            <i data-lucide="star" class="w-4 h-4 text-[#C05621]"></i> 同时设为 The ONE
+          </label>
+        </div>
+        <button type="submit" class="w-full bg-[#C05621] text-white font-black rounded-xl p-4 mt-4 hover:bg-[#9C4221] active:scale-[0.98] transition-all shadow-md tracking-widest">
+          确认雕刻
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // ==========================================
+    // 核心状态与初始化
+    // ==========================================
+    const getLocalDate = (d = new Date()) => {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
+    let state = {
+      settings: { 
+        birthDate: '1998-01-01', 
+        deathAge: 80,
+        bgMode: 'default',
+        bgColor: '#F4F2EE',
+        bgImage: '',
+        keepTexture: true
+      },
+      tasks: [],
+      reflections: {},
+      notes: {},
+      selectedDate: getLocalDate(),
+      activeTab: 'todo',
+      lifeViewMode: 'weeks',
+      ddlReminder: 'none',
+      isSpeaking: false
+    };
+
+    // 新增：用于月份漫游的状态
+    let viewYear = new Date().getFullYear();
+    let viewMonth = new Date().getMonth(); // 0-11
+    const todayStr = getLocalDate();
+
+    const savedData = localStorage.getItem('memento_state_v2');
+    if (savedData) {
+      try { state = { ...state, ...JSON.parse(savedData) }; } catch(e){}
+    }
+    const saveState = () => localStorage.setItem('memento_state_v2', JSON.stringify(state));
+
+    // ==========================================
+    // 音效引擎
+    // ==========================================
+    let audioCtx = null;
+    const playTone = (frequency, type = 'sine', duration = 0.1, volume = 0.1) => {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return; 
+      if (!audioCtx) audioCtx = new AudioContext();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = type;
+      oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+      gainNode.gain.setValueAtTime(volume, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + duration);
+    };
+
+    const playMinorSuccess = () => playTone(880, 'sine', 0.2, 0.1);
+    const playMajorSuccess = () => {
+      setTimeout(() => playTone(523.25, 'triangle', 0.3, 0.2), 0);
+      setTimeout(() => playTone(659.25, 'triangle', 0.3, 0.2), 100);
+      setTimeout(() => playTone(783.99, 'triangle', 0.4, 0.2), 200);
+      setTimeout(() => playTone(1046.50, 'sine', 0.6, 0.3), 300);
+    };
+
+    // ==========================================
+    // 界面与背景渲染
+    // ==========================================
+    function renderApp() {
+      applyBackground();
+      renderMonthlyTrack();
+      renderDdls();
+      renderLifeBattery();
+      lucide.createIcons();
+      saveState();
+    }
+
+    function applyBackground() {
+      const bgLayer = document.getElementById('global-bg-layer');
+      const texLayer = document.getElementById('global-texture-overlay');
+      const { bgMode, bgColor, bgImage, keepTexture } = state.settings;
+
+      if (bgMode === 'default') {
+        bgLayer.style.backgroundColor = '#F4F2EE';
+        bgLayer.style.backgroundImage = 'none';
+      } else if (bgMode === 'color') {
+        bgLayer.style.backgroundColor = bgColor;
+        bgLayer.style.backgroundImage = 'none';
+      } else if (bgMode === 'image') {
+        bgLayer.style.backgroundColor = '#000';
+        bgLayer.style.backgroundImage = `url(${bgImage})`;
+      }
+
+      texLayer.style.opacity = keepTexture ? '1' : '0';
+    }
+
+    // 切换月份漫游
+    function changeMonth(offset) {
+      viewMonth += offset;
+      if (viewMonth > 11) { viewMonth = 0; viewYear++; }
+      if (viewMonth < 0) { viewMonth = 11; viewYear--; }
+      renderMonthlyTrack();
+    }
+
+    function renderMonthlyTrack() {
+      const container = document.getElementById('monthly-track');
+      const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+      
+      // 更新月份标题
+      const isCurrentMonth = (viewYear === new Date().getFullYear() && viewMonth === new Date().getMonth());
+      document.getElementById('month-title').innerHTML = isCurrentMonth ? '本月轨迹 / Track' : `${viewYear}年 ${viewMonth + 1}月 / Track`;
+
+      let html = '';
+      for (let i = 1; i <= daysInMonth; i++) {
+        const date = new Date(viewYear, viewMonth, i);
+        const dateStr = getLocalDate(date);
+        
+        const dayTasks = state.tasks.filter(t => t.date === dateStr);
+        const allDone = dayTasks.length > 0 && dayTasks.every(t => t.completed);
+        const hasOneThingDone = dayTasks.some(t => t.isOneThing && t.completed);
+        
+        let classes = `w-10 h-10 sm:w-11 sm:h-11 mx-auto marble-stone rounded-full flex items-center justify-center transition-all duration-300 `;
+        if (dateStr === todayStr) classes += 'ring-4 ring-white/80 ring-offset-2 ring-offset-transparent shadow-[0_4px_15px_rgba(0,0,0,0.1)] scale-105 z-10 ';
+        
+        // 字体雕刻效果设定
+        let textClass = "text-engraved font-bold text-[13px] ";
+
+        if (hasOneThingDone) {
+          classes += 'bg-[#C05621] transform hover:scale-110 shadow-[0_4px_15px_rgba(192,86,33,0.4)]';
+          textClass = 'text-embossed font-bold text-[13px]';
+        } else if (allDone) {
+          classes += 'bg-[#688371] shadow-[0_4px_10px_rgba(104,131,113,0.4)]';
+          textClass = 'text-embossed font-bold text-[13px]';
+        } else if (dayTasks.length > 0) {
+          classes += 'bg-[#CBD5E0] hover:bg-[#A0AEC0]';
+        } else {
+          classes += 'bg-white/50 hover:bg-white/80';
+        }
+
+        html += `<button onclick="openDayModal(event, '${dateStr}')" class="${classes}" title="${dateStr}">
+                   <span class="${textClass}">${i}</span>
+                 </button>`;
+      }
+      container.innerHTML = html;
+    }
+
+    function renderDdls() {
+      const container = document.getElementById('ddl-list');
+      const pendingDdls = state.tasks.filter(t => t.ddl && !t.completed).sort((a,b) => new Date(a.ddl) - new Date(b.ddl));
+      
+      if (pendingDdls.length === 0) {
+        container.innerHTML = `
+          <div class="py-8 text-center flex flex-col items-center justify-center text-[#A0AEC0]">
+            <i data-lucide="clock" class="w-10 h-10 mb-3 opacity-40"></i>
+            <p class="text-sm font-medium tracking-wide">时空静好，目前没有紧急任务 ☕️</p>
+          </div>`;
+      } else {
+        container.innerHTML = pendingDdls.map(task => `
+          <div class="flex justify-between items-center bg-white/60 p-4 rounded-2xl border border-white/80 shadow-sm transition-all hover:bg-white/80">
+            <div class="flex items-center gap-3">
+              <i data-lucide="clock" class="w-4 h-4 text-[#C05621]"></i>
+              <span class="font-bold text-[#2D3748]">${task.text}</span>
+              ${task.reminder && task.reminder !== 'none' && !task.notified ? `<i data-lucide="bell" class="w-3.5 h-3.5 text-[#688371]" title="已开启提醒"></i>` : ''}
+            </div>
+            <span class="text-sm text-[#C05621] font-mono font-bold">${new Date(task.ddl).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})}</span>
+          </div>
+        `).join('');
+      }
+    }
+
+    function renderLifeBattery() {
+      const birth = new Date(state.settings.birthDate + 'T00:00:00');
+      const now = new Date();
+      const death = new Date(birth.getFullYear() + Number(state.settings.deathAge), birth.getMonth(), birth.getDate());
+      
+      const totalWeeks = Math.floor((death - birth) / (1000 * 60 * 60 * 24 * 7));
+      const weeksLived = Math.floor((now - birth) / (1000 * 60 * 60 * 24 * 7));
+      const totalMonths = Number(state.settings.deathAge) * 12;
+      const monthsLived = (now.getFullYear() - birth.getFullYear()) * 12 + now.getMonth() - birth.getMonth();
+
+      const isWeeks = state.lifeViewMode === 'weeks';
+      
+      document.getElementById('life-progress-text').innerText = `${Math.min(100, Math.max(0, Math.round((weeksLived / totalWeeks) * 100)))}%`;
+      document.getElementById('life-lived').innerText = isWeeks ? weeksLived : monthsLived;
+      document.getElementById('life-total').innerText = isWeeks ? totalWeeks : totalMonths;
+      document.getElementById('life-left').innerText = isWeeks ? (totalWeeks - weeksLived) : (totalMonths - monthsLived);
+      document.getElementById('life-unit-1').innerText = isWeeks ? '周' : '月';
+      document.getElementById('life-unit-2').innerText = isWeeks ? '周' : '月';
+
+      const circle = document.getElementById('life-progress-circle');
+      circle.style.strokeDashoffset = 263.9 - (263.9 * (weeksLived / totalWeeks));
+
+      const cardWeeks = document.getElementById('card-weeks');
+      const cardMonths = document.getElementById('card-months');
+      if (isWeeks) {
+        cardWeeks.className = cardWeeks.className.replace('z-10 scale-[0.97] translate-y-3 opacity-60 hover:opacity-80 border-white/50', 'z-20 scale-100 opacity-100 shadow-sm border-white/80');
+        cardMonths.className = cardMonths.className.replace('z-20 scale-100 opacity-100 shadow-sm border-white/80', 'z-10 scale-[0.97] translate-y-3 opacity-60 hover:opacity-80 border-white/50');
+      } else {
+        cardMonths.className = cardMonths.className.replace('z-10 scale-[0.97] translate-y-3 opacity-60 hover:opacity-80 border-white/50', 'z-20 scale-100 opacity-100 shadow-sm border-white/80');
+        cardWeeks.className = cardWeeks.className.replace('z-20 scale-100 opacity-100 shadow-sm border-white/80', 'z-10 scale-[0.97] translate-y-3 opacity-60 hover:opacity-80 border-white/50');
+      }
+
+      if (!document.getElementById('grid-weeks').innerHTML) {
+        let wHtml = '';
+        for(let i=0; i<totalWeeks; i++) wHtml += `<div class="w-1.5 h-1.5 rounded-full ${i < weeksLived ? 'bg-[#2D3748] shadow-sm' : 'bg-[#E2E8F0]'}"></div>`;
+        document.getElementById('grid-weeks').innerHTML = wHtml;
+      }
+      if (!document.getElementById('grid-months').innerHTML) {
+        let mHtml = '';
+        for(let i=0; i<totalMonths; i++) mHtml += `<div class="w-2.5 h-2.5 rounded-full ${i < monthsLived ? 'bg-[#688371] shadow-sm' : 'bg-[#E2E8F0]'}"></div>`;
+        document.getElementById('grid-months').innerHTML = mHtml;
+      }
+    }
+
+    function toggleLifeViewMode() {
+      state.lifeViewMode = state.lifeViewMode === 'weeks' ? 'months' : 'weeks';
+      renderLifeBattery();
+      saveState();
+    }
+
+    // ==========================================
+    // 精准的 Modal & Tabs 滑动逻辑 (重构修复版)
+    // ==========================================
+    const tabs = ['todo', 'note', 'reflection'];
+
+    function openDayModal(e, dateStr) {
+      state.selectedDate = dateStr;
+      state.activeTab = 'todo'; 
+      
+      document.getElementById('modal-date-title').innerText = dateStr;
+      document.getElementById('reflection-input').value = state.reflections[dateStr] || '';
+      document.getElementById('note-input').value = state.notes[dateStr] || '';
+      renderDayTasks();
+
+      const rect = e.currentTarget.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const targetW = Math.min(window.innerWidth * 0.95, 420);
+
+      const gooey = document.getElementById('gooey-container');
+      const blobOrigin = document.getElementById('blob-origin');
+      const blobExpanded = document.getElementById('blob-expanded');
+      
+      gooey.classList.remove('hidden-safe');
+      
+      blobOrigin.style.cssText = `left: ${cx}px; top: ${cy}px; width: ${rect.width}px; height: ${rect.height}px; transform: translate(-50%, -50%); border-radius: 50%; opacity: 1;`;
+      blobExpanded.style.cssText = `left: ${cx}px; top: ${cy}px; width: ${rect.width}px; height: ${rect.height}px; transform: translate(-50%, -50%); border-radius: 50%;`;
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          blobOrigin.style.opacity = '0';
+          blobExpanded.style.cssText = `left: 50%; top: 50%; width: ${targetW}px; height: 560px; transform: translate(-50%, -50%); border-radius: 2rem;`;
+          
+          setTimeout(() => {
+            document.getElementById('day-modal-backdrop').classList.replace('opacity-0', 'opacity-100');
+            document.getElementById('day-modal-backdrop').classList.remove('pointer-events-none');
+            document.getElementById('day-modal-container').classList.remove('hidden-safe');
+            updateTabsUI(); 
+          }, 600);
+        });
+      });
+    }
+
+    function closeDayModal() {
+      document.getElementById('day-modal-backdrop').classList.replace('opacity-100', 'opacity-0');
+      document.getElementById('day-modal-backdrop').classList.add('pointer-events-none');
+      document.getElementById('day-modal-container').classList.add('hidden-safe');
+
+      const blobOrigin = document.getElementById('blob-origin');
+      const blobExpanded = document.getElementById('blob-expanded');
+      
+      blobOrigin.style.opacity = '1';
+      blobExpanded.style.cssText = blobOrigin.style.cssText.replace('opacity: 1;', '');
+
+      setTimeout(() => {
+        document.getElementById('gooey-container').classList.add('hidden-safe');
+        renderApp(); 
+      }, 500);
+    }
+
+    function setActiveTab(tabName) {
+      state.activeTab = tabName;
+      updateTabsUI();
+    }
+
+    function updateTabsUI() {
+      tabs.forEach(tab => {
+        const el = document.getElementById(`tab-${tab}`);
+        const overlay = document.getElementById(`overlay-${tab}`);
+        const inputs = el.querySelectorAll('input, textarea, button:not(.btn-close)');
+        const diff = tabs.indexOf(tab) - tabs.indexOf(state.activeTab);
+        
+        // 加入 border-t-[3px] 和高光阴影，增强折叠堆叠立体感
+        let baseClass = "absolute w-full max-w-[420px] left-0 right-0 mx-auto h-[560px] shadow-[0_-10px_40px_rgba(0,0,0,0.1),inset_0_2px_4px_rgba(255,255,255,0.9)] transition-all duration-500 ease-out overflow-hidden rounded-[2rem] border-x border-b border-white/60 border-t-[3px] border-t-white/90 ";
+        
+        let bgClass = "";
+        if (tab === 'reflection') bgClass = "bg-white/85 backdrop-blur-2xl ";
+        if (tab === 'note') bgClass = "bg-[#F4F2EE]/95 backdrop-blur-2xl ";
+        if (tab === 'todo') bgClass = "bg-white/90 backdrop-blur-2xl ";
+
+        let dynamicClass = "";
+        if (diff === 0) {
+          dynamicClass = "z-30 translate-y-0 scale-100 opacity-100 pointer-events-auto shadow-[0_20px_40px_rgba(0,0,0,0.15)]";
+          overlay.style.display = 'none';
+          inputs.forEach(i => i.disabled = false);
+        } else {
+          overlay.style.display = 'block';
+          inputs.forEach(i => i.disabled = true);
+          // 视觉下沉，营造卡片抽屉感
+          if (diff === 1) dynamicClass = "z-20 translate-y-[100px] scale-[0.94] opacity-[0.98] hover:translate-y-[90px] cursor-pointer pointer-events-auto";
+          else if (diff === 2) dynamicClass = "z-10 translate-y-[190px] scale-[0.88] opacity-90 hover:translate-y-[180px] cursor-pointer pointer-events-auto";
+          else if (diff === -1) dynamicClass = "z-20 -translate-y-[100px] scale-[0.94] opacity-[0.98] hover:-translate-y-[90px] cursor-pointer pointer-events-auto";
+          else if (diff === -2) dynamicClass = "z-10 -translate-y-[190px] scale-[0.88] opacity-90 hover:-translate-y-[180px] cursor-pointer pointer-events-auto";
+        }
+
+        el.className = baseClass + bgClass + dynamicClass;
+      });
+      
+      const quote = document.getElementById('reflection-quote');
+      if(state.activeTab === 'reflection') {
+        quote.classList.remove('opacity-0', 'translate-y-4');
+        quote.classList.add('opacity-100', 'translate-y-0');
+      } else {
+        quote.classList.add('opacity-0', 'translate-y-4');
+        quote.classList.remove('opacity-100', 'translate-y-0');
+      }
+    }
+
+    const handleNextTab = () => { const n = tabs[tabs.indexOf(state.activeTab) + 1]; if (n) setActiveTab(n); };
+    const handlePrevTab = () => { const n = tabs[tabs.indexOf(state.activeTab) - 1]; if (n) setActiveTab(n); };
+    
+    // 判断是否在文本框或滚动列表中，若是则不触发翻页滑动
+    const isInsideScrollable = (t) => {
+        if (!t || !t.closest) return false;
+        return t.closest('.custom-scrollbar') || t.tagName === 'TEXTAREA' || t.tagName === 'INPUT';
+    };
+    
+    window.addEventListener('keydown', (e) => {
+      if (document.getElementById('day-modal-container').classList.contains('hidden-safe')) return;
+      if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+      if (e.key === 'ArrowUp') { e.preventDefault(); handlePrevTab(); }
+      if (e.key === 'ArrowDown') { e.preventDefault(); handleNextTab(); }
+    });
+
+    // --- 触控滑动引擎复活 ---
+    let touchStartY = 0;
+    let touchEndY = 0;
+    const modalContainer = document.getElementById('day-modal-container');
+
+    modalContainer.addEventListener('touchstart', e => {
+      if (isInsideScrollable(e.target)) return;
+      touchStartY = e.changedTouches[0].screenY;
+    }, {passive: true});
+
+    modalContainer.addEventListener('touchend', e => {
+      if (isInsideScrollable(e.target)) return;
+      touchEndY = e.changedTouches[0].screenY;
+      
+      const dist = touchEndY - touchStartY;
+      if (dist < -40) handleNextTab(); // 上滑看下一页 (如从 P1 到 P2)
+      if (dist > 40) handlePrevTab();  // 下滑回上一页
+    }, {passive: true});
+
+    let wheelTimeout = null;
+    modalContainer.addEventListener('wheel', e => {
+      if (isInsideScrollable(e.target) || wheelTimeout) return;
+      if (e.deltaY > 30) { handleNextTab(); wheelTimeout = setTimeout(() => wheelTimeout = null, 400); }
+      if (e.deltaY < -30) { handlePrevTab(); wheelTimeout = setTimeout(() => wheelTimeout = null, 400); }
+    });
+
+    // ==========================================
+    // 任务系统
+    // ==========================================
+    function renderDayTasks() {
+      const container = document.getElementById('day-task-list');
+      const dayTasks = state.tasks.filter(t => t.date === state.selectedDate);
+      
+      container.innerHTML = dayTasks.map(task => {
+        const bgClass = task.completed ? 
+          (task.isOneThing ? 'bg-[#C05621] text-white border-transparent shadow-[0_4px_10px_rgba(192,86,33,0.3)]' : 'bg-white/40 text-[#A0AEC0] border-white/50 shadow-inner') : 
+          (task.isOneThing ? 'bg-[#F2EDE4]/90 border-[#C05621]/40 hover:bg-[#F2EDE4] shadow-sm' : 'bg-white/60 border-white/80 hover:bg-white/90 shadow-sm');
+        
+        const iconClass = task.completed ? (task.isOneThing ? 'text-white' : 'text-[#688371]') : 'text-[#CBD5E0]';
+        const iconName = task.completed ? 'check-circle-2' : 'circle';
+        
+        return `
+          <div id="task-el-${task.id}" onclick="toggleTaskStatus('${task.id}')" class="group flex items-center gap-4 p-4 rounded-2xl border cursor-pointer transition-all ${bgClass}">
+            <button class="flex-shrink-0 ${iconClass} transition-colors duration-300"><i data-lucide="${iconName}" class="w-6 h-6"></i></button>
+            <div class="flex-1 flex flex-col"><span class="font-bold text-lg tracking-wide ${task.completed ? 'line-through opacity-70' : ''}">${task.text}</span></div>
+            ${task.isOneThing ? `<i data-lucide="star" class="w-5 h-5 transition-colors ${task.completed ? 'text-white fill-current drop-shadow-sm' : 'text-[#C05621] fill-current drop-shadow-sm'}"></i>` : ''}
+          </div>
+        `;
+      }).join('');
+      lucide.createIcons();
+    }
+
+    function handleAddTask(e) {
+      e.preventDefault();
+      const text = document.getElementById('task-text-input').value.trim();
+      if (!text) return;
+      
+      state.tasks.push({
+        id: Date.now().toString(),
+        date: state.selectedDate,
+        text,
+        isOneThing: document.getElementById('task-onething-input').checked,
+        ddl: document.getElementById('task-ddl-input').value,
+        reminder: 'none',
+        notified: false,
+        completed: false
+      });
+      
+      e.target.reset();
+      renderDayTasks();
+      saveState();
+      
+      // 添加任务后实时更新轨迹上的圆球颜色状态
+      renderMonthlyTrack(); 
+    }
+
+    function toggleTaskStatus(id) {
+      if (state.activeTab !== 'todo') return;
+      const task = state.tasks.find(t => t.id === id);
+      if(!task) return;
+      
+      task.completed = !task.completed;
+      
+      if (task.completed) {
+        if (task.isOneThing) {
+          playMajorSuccess();
+          const el = document.getElementById(`task-el-${id}`);
+          document.getElementById('day-modal-backdrop').classList.replace('bg-[#1A202C]/60', 'bg-[#1A202C]/80');
+          document.getElementById('day-modal-backdrop').classList.add('animate-flash');
+          el.classList.add('animate-shake', 'z-50', 'relative');
+          setTimeout(() => {
+            document.getElementById('day-modal-backdrop').classList.replace('bg-[#1A202C]/80', 'bg-[#1A202C]/60');
+            document.getElementById('day-modal-backdrop').classList.remove('animate-flash');
+            el.classList.remove('animate-shake', 'z-50', 'relative');
+          }, 1500);
+        } else {
+          playMinorSuccess();
+        }
+      }
+      renderDayTasks();
+      saveState();
+      renderMonthlyTrack(); // 更新外面轨迹颜色
+    }
+
+    function saveText(type, val) {
+      if (type === 'reflection') state.reflections[state.selectedDate] = val;
+      if (type === 'note') state.notes[state.selectedDate] = val;
+      saveState();
+    }
+
+    // ==========================================
+    // DDL Modal 与系统提醒
+    // ==========================================
+    const reminderOpts = [
+      { value: 'none', label: '无提醒' }, { value: '0m', label: '正点提醒' }, { value: '5m', label: '提前 5 分钟' },
+      { value: '30m', label: '提前 30 分钟' }, { value: '1h', label: '提前 1 小时' }, { value: '12h', label: '提前 12 小时' },
+      { value: '1d', label: '提前 1 天' }, { value: '2d', label: '提前 2 天' }, { value: '3d', label: '提前 3 天' },
+      { value: '7d', label: '提前 7 天' }, { value: '14d', label: '提前 14 天' }
+    ];
+
+    function openDdlModal() {
+      state.ddlReminder = 'none';
+      renderDdlOptions();
+      document.getElementById('ddl-modal').classList.remove('hidden-safe');
+    }
+    function closeDdlModal() {
+      document.getElementById('ddl-modal').classList.add('hidden-safe');
+    }
+
+    function renderDdlOptions() {
+      document.getElementById('reminder-options').innerHTML = reminderOpts.map(opt => `
+        <div onclick="setDdlReminder('${opt.value}')" class="snap-center px-4 py-3 my-1 text-center rounded-xl cursor-pointer transition-all text-sm font-bold ${
+          state.ddlReminder === opt.value ? 'bg-[#C05621] text-white shadow-md scale-100' : 'text-[#718096] hover:bg-white/80 hover:text-[#2D3748] scale-95'
+        }">${opt.label}</div>
+      `).join('');
+    }
+
+    function setDdlReminder(val) {
+      state.ddlReminder = val;
+      renderDdlOptions();
+    }
+
+    function handleAddDdlTask(e) {
+      e.preventDefault();
+      const text = document.getElementById('ddl-text').value.trim();
+      const ddl = document.getElementById('ddl-date').value;
+      if (!text || !ddl) return;
+      
+      const ddlDate = ddl.split('T')[0];
+      state.tasks.push({
+        id: Date.now().toString(),
+        date: ddlDate,
+        text,
+        isOneThing: document.getElementById('ddl-onething').checked,
+        ddl,
+        reminder: state.ddlReminder,
+        notified: false,
+        completed: false
+      });
+      
+      e.target.reset();
+      closeDdlModal();
+      renderApp();
+    }
+
+    if ('Notification' in window && Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+      Notification.requestPermission();
+    }
+    setInterval(() => {
+      const now = Date.now();
+      let hasUpdate = false;
+      const getOffset = (type) => {
+        const m = { '0m':0, '5m':5, '30m':30, '1h':60, '12h':12*60, '1d':24*60, '2d':2*24*60, '3d':3*24*60, '7d':7*24*60, '14d':14*24*60 };
+        return (m[type] || 0) * 60000;
+      };
+
+      state.tasks.forEach(t => {
+        if (t.ddl && t.reminder && t.reminder !== 'none' && !t.notified && !t.completed) {
+          const ddlTime = new Date(t.ddl).getTime();
+          if (!isNaN(ddlTime) && now >= ddlTime - getOffset(t.reminder)) {
+            hasUpdate = true;
+            t.notified = true;
+            playMinorSuccess();
+            if (Notification.permission === 'granted') new Notification('DDL 提醒 ⏰', { body: `你的任务「${t.text}」即将到期！` });
+          }
+        }
+      });
+      if(hasUpdate) { renderDdls(); saveState(); }
+    }, 10000);
+
+    // ==========================================
+    // 语音识别
+    // ==========================================
+    let recognition = null;
+    if (window.SpeechRecognition || window.webkitSpeechRecognition) {
+      recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'zh-CN';
+      recognition.onresult = (e) => {
+        const text = e.results[0][0].transcript;
+        const input = document.getElementById('reflection-input');
+        input.value += text;
+        saveText('reflection', input.value);
+        state.isSpeaking = false;
+        updateMicUI();
+      };
+      recognition.onerror = () => { state.isSpeaking = false; updateMicUI(); };
+      recognition.onend = () => { state.isSpeaking = false; updateMicUI(); };
+    }
+
+    function toggleSpeech() {
+      if (!recognition) return alert('当前浏览器不支持语音识别哦~');
+      if (state.isSpeaking) recognition.stop();
+      else recognition.start();
+      state.isSpeaking = !state.isSpeaking;
+      updateMicUI();
+    }
+
+    function updateMicUI() {
+      const btn = document.getElementById('btn-mic');
+      if(state.isSpeaking) {
+        btn.className = btn.className.replace('bg-[#2D3748] text-[#F9F8F6]', 'bg-[#C05621] text-white animate-pulse');
+        btn.innerHTML = `<i data-lucide="mic-off" class="w-5 h-5"></i>`;
+      } else {
+        btn.className = btn.className.replace('bg-[#C05621] text-white animate-pulse', 'bg-[#2D3748] text-[#F9F8F6]');
+        btn.innerHTML = `<i data-lucide="mic" class="w-5 h-5"></i>`;
+      }
+      lucide.createIcons();
+    }
+
+    // ==========================================
+    // 设置面板与壁纸系统
+    // ==========================================
+    function openSettings() {
+      document.getElementById('set-birth').value = state.settings.birthDate;
+      document.getElementById('set-death').value = state.settings.deathAge;
+      
+      const { bgMode, bgColor, bgImage, keepTexture } = state.settings;
+      document.querySelector(`input[name="bgMode"][value="${bgMode}"]`).checked = true;
+      document.getElementById('bg-color-picker').value = bgColor;
+      document.getElementById('toggle-texture-overlay').checked = keepTexture;
+      
+      if(bgImage) {
+        document.getElementById('bg-image-preview').src = bgImage;
+        document.getElementById('bg-image-preview').classList.remove('hidden');
+      }
+      
+      changeBgMode(bgMode);
+      document.getElementById('settings-modal').classList.remove('hidden-safe');
+    }
+
+    function closeSettings() {
+      document.getElementById('settings-modal').classList.add('hidden-safe');
+    }
+
+    function changeBgMode(mode) {
+      state.settings.bgMode = mode;
+      const uploadArea = document.getElementById('custom-image-upload-area');
+      if(mode === 'image') uploadArea.classList.remove('hidden');
+      else uploadArea.classList.add('hidden');
+    }
+
+    function updateBgColor(color) {
+      state.settings.bgColor = color;
+      document.querySelector(`input[name="bgMode"][value="color"]`).checked = true;
+      changeBgMode('color');
+    }
+
+    function toggleTextureOverlay() {
+      state.settings.keepTexture = document.getElementById('toggle-texture-overlay').checked;
+    }
+
+    function handleImageUpload(e) {
+      const file = e.target.files[0];
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          const MAX_WIDTH = 1920; const MAX_HEIGHT = 1080;
+          let width = img.width; let height = img.height;
+          
+          if (width > height) {
+            if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+          } else {
+            if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; }
+          }
+          
+          canvas.width = width; canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          
+          document.getElementById('bg-image-preview').src = dataUrl;
+          document.getElementById('bg-image-preview').classList.remove('hidden');
+          state.settings.bgImage = dataUrl;
+          document.querySelector(`input[name="bgMode"][value="image"]`).checked = true;
+          changeBgMode('image');
+        }
+        img.src = ev.target.result;
+      }
+      reader.readAsDataURL(file);
+    }
+
+    function saveSettings() {
+      state.settings.birthDate = document.getElementById('set-birth').value || '1998-01-01';
+      state.settings.deathAge = parseInt(document.getElementById('set-death').value) || 80;
+      closeSettings();
+      renderApp();
+    }
+
+    window.onload = () => renderApp();
+
+  </script>
+</body>
+</html>
